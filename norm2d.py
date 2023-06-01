@@ -37,13 +37,11 @@ print(ln_net.weight)
 print(ln_net.bias)
 '''
 使用特点:
-1-  BatchNorm:batch方向做归一化,算NHW的均值,对小batchsize效果不好;
-    BN主要缺点是对batchsize的大小比较敏感,由于每次计算均值和方差是在一个batch上
-    所以如果batchsize太小,则计算的均值、方差不足以代表整个数据分布
-2-  LayerNorm:channel方向做归一化,算CHW的均值,主要对RNN作用明显;
-3-  batch normalization的缺点:因为统计意义,在batch_size较大时才表现较好;不易用于RNN;训练和预测时用的统计量不同等。
-    layer normalization就比较适合用于RNN和单条样本的训练和预测。但是在batch_size较大时性能时比不过batch normalization的。
+1- BN抹平了不同特征之间的大小关系，而保留了不同样本之间的大小关系。这样，如果具体任务依赖于不同样本之间的关系，BN更有效，尤其是在CV领域，例如不同图片样本进行分类，不同样本之间的大小关系得以保留。
+2- LN抹平了不同样本之间的大小关系，而保留了不同特征之间的大小关系。所以，LN更适合NLP领域的任务，其中，一个样本的特征实际上就是不同word embedding，通过LN可以保留特征之间的这种时序关系。
 
-batch normalization对一个神经元的batch所有样本进行标准化,layer normalization对一个样本同一层
-所有神经元进行标准化,前者纵向 normalization,后者横向 normalization。
+BN使featu1、featu2....服从norm分布 - 抹平了不同特征之间的大小关系
+LN使batch1、batch2....服从norm分布 - 抹平了不同样本之间的大小关系
+
+img: https://img-blog.csdnimg.cn/95f3405f30c9421d9a5a708a6418381b.png?x-oss-process=image/watermark,type_d3F5LXplbmhlaQ,shadow_50,text_Q1NETiBA5pWy5Luj56CB55qEcXVhbnQ=,size_10,color_FFFFFF,t_70,g_se,x_16
 '''
