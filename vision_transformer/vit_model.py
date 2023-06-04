@@ -27,7 +27,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 
-
+# 随机深度模块
 def drop_path(x, drop_prob: float = 0., training: bool = False):
     """
     Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
@@ -40,9 +40,13 @@ def drop_path(x, drop_prob: float = 0., training: bool = False):
     if drop_prob == 0. or not training:
         return x
     keep_prob = 1 - drop_prob
+    # x.ndim => x的维度数量 (1,3,6,6) =>  4
+    # (1,) 是一个元组，乘以数字，会复制元组 => (1,1,1)
+    # 元组的加法 => (1,) + (1,1,1) => (1,1,1,1) 被加元素的元素排列在原元组后面
     shape = (x.shape[0],) + (1,) * (x.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets
     random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
-    random_tensor.floor_()  # binarize
+    random_tensor.floor_()  # binarize 二值化 => x取小于x的整数
+    # .div(keep_prob) => 除以keep_prob
     output = x.div(keep_prob) * random_tensor
     return output
 
@@ -56,6 +60,7 @@ class DropPath(nn.Module):
         self.drop_prob = drop_prob
 
     def forward(self, x):
+        # self.training会继承nn.Module属性，即网络当前是否处于训练状态
         return drop_path(x, self.drop_prob, self.training)
 
 
@@ -66,15 +71,20 @@ class PatchEmbed(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_c=3, embed_dim=768, norm_layer=None):
         super().__init__()
         img_size = (img_size, img_size)
-        patch_size = (patch_size, patch_size)
+        patch_size = (patch_size, patch_size)  # patch_size 16
         self.img_size = img_size
         self.patch_size = patch_size
+        # img_size 224 - patch_size 16 - grid_size 14
         self.grid_size = (img_size[0] // patch_size[0], img_size[1] // patch_size[1])
+        # flatten后有多少个patches
         self.num_patches = self.grid_size[0] * self.grid_size[1]
-
+        
+        # (224 - 16) / 16 + 1 => 224 / 16  => stride和kernelsize设置为相同，H_0 = H / stride
+       
         self.proj = nn.Conv2d(in_c, embed_dim, kernel_size=patch_size, stride=patch_size)
-        self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
-
+        self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()  # nn.Identity()恒等函数
+        
+    # VIT模型当中，传入图片的大小必须固定，否则会报错
     def forward(self, x):
         B, C, H, W = x.shape
         assert H == self.img_size[0] and W == self.img_size[1], \
@@ -83,6 +93,7 @@ class PatchEmbed(nn.Module):
         # flatten: [B, C, H, W] -> [B, C, HW]
         # transpose: [B, C, HW] -> [B, HW, C]
         x = self.proj(x).flatten(2).transpose(1, 2)
+        # flatten函数 => flatten(x) 从第x个维度展开，即从该维度的后面若干个维度展开
         x = self.norm(x)
         return x
 
@@ -94,14 +105,14 @@ class Attention(nn.Module):
     def __init__(self,
                  dim,   # 输入token的dim
                  num_heads=8,
-                 qkv_bias=False,
-                 qk_scale=None,
+                 qkv_bias=False,   # 生成qkv时是否需要偏置 w_q * q + b_q= out_q
+                 qk_scale=None,    # 取数代替  /sqrt(head_dim)
                  attn_drop_ratio=0.,
                  proj_drop_ratio=0.):
         super(Attention, self).__init__()
         self.num_heads = num_heads
-        head_dim = dim // num_heads  # dim == token_dim == embed_dim
-        self.scale = qk_scale or head_dim ** -0.5
+        head_dim = dim // num_heads  # dim == token_dim == embed_dim  head的维度 = token维度 / head个数
+        self.scale = qk_scale or head_dim ** -0.5    # X/sqrt(head_dim) 
         # 同时完成了w_q w_k w_v的相乘过程，所有输入的w_q, w_k, w_v权值是共享的，故可直接用线性层
         
         # a- 从理解的角度上，q1->q1_h1 + q1_h2 + ... + q1_hh (拆分操作)
@@ -110,10 +121,12 @@ class Attention(nn.Module):
         # 以上操作可以并行化处理，故代码中可以直接用线性层
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias) 
         self.attn_drop = nn.Dropout(attn_drop_ratio)
-        self.proj = nn.Linear(dim, dim)
+        self.proj = nn.Linear(dim, dim)     # Wo
         self.proj_drop = nn.Dropout(proj_drop_ratio)
 
     def forward(self, x):
+        # [batch_size, num_patches + 1, total_embed_dim]
+        # num_patches + 1  其中 class_token => 1
         # [batch_size, num_patches + 1, total_embed_dim]
         B, N, C = x.shape
 
@@ -127,7 +140,10 @@ class Attention(nn.Module):
 
         # transpose: -> [batch_size, num_heads, embed_dim_per_head, num_patches + 1]
         # @: multiply -> [batch_size, num_heads, num_patches + 1, num_patches + 1]
+        # 此处代表多个q矩阵和多个k矩阵进行 矩阵的乘法 (最后两个维度 行 列 的矩阵)
         attn = (q @ k.transpose(-2, -1)) * self.scale
+        # 以最后一个维度的方向为标准做softmax，其结果的维度不变。
+        # 若为二维(h, w) 那么就是对每一行的数据进行softmax
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
 
@@ -135,8 +151,8 @@ class Attention(nn.Module):
         # transpose: -> [batch_size, num_patches + 1, num_heads, embed_dim_per_head]
         # reshape: -> [batch_size, num_patches + 1, total_embed_dim]
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        x = self.proj(x)
-        x = self.proj_drop(x)
+        x = self.proj(x)        # linear
+        x = self.proj_drop(x)   # dropout 
         return x
 
 
@@ -144,8 +160,11 @@ class Mlp(nn.Module):
     """
     MLP as used in Vision Transformer, MLP-Mixer and related networks
     """
+    # GELU 优于ReLU， ELU 为激活函数引入了随机性使得模型训练过程更加鲁棒
+    # GELU(x) = x * P(X<=x)
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
         super().__init__()
+        # or的用法介绍： None or 1 => 1  ||  2 or 1 => 2
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
         self.fc1 = nn.Linear(in_features, hidden_features)
@@ -167,9 +186,9 @@ class Block(nn.Module):
     def __init__(self,
                  dim,
                  num_heads,
-                 mlp_ratio=4.,
-                 qkv_bias=False,
-                 qk_scale=None,
+                 mlp_ratio=4.,     # 第一个全连接层的out_channel一般设置为in_channel的4倍
+                 qkv_bias=False,   # qkv的偏置
+                 qk_scale=None,    # 是否直接指定 /sqrt(dim)
                  drop_ratio=0.,
                  attn_drop_ratio=0.,
                  drop_path_ratio=0.,
@@ -192,8 +211,11 @@ class Block(nn.Module):
 
 
 class VisionTransformer(nn.Module):
+    # num_classes 数据类别个数
     def __init__(self, img_size=224, patch_size=16, in_c=3, num_classes=1000,
+                 # depth指的是 transformer的encoder当中重复堆叠block的个数
                  embed_dim=768, depth=12, num_heads=12, mlp_ratio=4.0, qkv_bias=True,
+                 # representation_size在最后输出前，除了最后一个Linear，是否还需要Linear
                  qk_scale=None, representation_size=None, distilled=False, drop_ratio=0.,
                  attn_drop_ratio=0., drop_path_ratio=0., embed_layer=PatchEmbed, norm_layer=None,
                  act_layer=None):
@@ -221,14 +243,16 @@ class VisionTransformer(nn.Module):
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
         self.num_tokens = 2 if distilled else 1
+        # 偏函数 bin = partial(fun, 10) => bin(20) => fun(10, 20)
+        # 此处指代 若不指定 norm_layer 则 norm_layer 为 nn.LayerNorm 且 默认参数eps = 1e-6
         norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
-        act_layer = act_layer or nn.GELU
+        act_layer = act_layer or nn.GELU   # 这种写法很不错，是否指定，没有指定的话就是用GELU
 
         self.patch_embed = embed_layer(img_size=img_size, patch_size=patch_size, in_c=in_c, embed_dim=embed_dim)
-        num_patches = self.patch_embed.num_patches
+        num_patches = self.patch_embed.num_patches   # 调用类
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        # dist_token不用管
+        # dist_token不用管  distilled self.dist_token 无用参数
         self.dist_token = nn.Parameter(torch.zeros(1, 1, embed_dim)) if distilled else None
         # self.num_token = 1
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + self.num_tokens, embed_dim))
